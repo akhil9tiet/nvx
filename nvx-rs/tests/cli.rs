@@ -1329,3 +1329,69 @@ mod interrupts {
         assert_eq!(errors, "Interrupted\n");
     }
 }
+
+#[test]
+fn provision_refuses_network_options_that_openvmm_would_refuse() {
+    // `resolve_network_egress_rules` prevalidates the network options that OpenVMM would
+    // refuse, with OpenVMM's messages, for `run` and `provision`: non-empty egress rules
+    // without `--network-egress`, and `--host-loopback-forward` without `--host-loopback
+    // allow`. A refused provision writes no state directory.
+    let root = populated_root();
+    let cases = [
+        (
+            "egress-allow",
+            ["--network-egress-allow", "tcp://*.example.com:443"],
+            "openvmm: --network-egress is required with egress rules",
+        ),
+        (
+            "egress-deny",
+            ["--network-egress-deny", "tcp://*.example.com:443"],
+            "openvmm: --network-egress is required with egress rules",
+        ),
+        (
+            "loopback-forward",
+            ["--host-loopback-forward", "tcp:8080"],
+            "openvmm: --host-loopback-forward requires explicit --host-loopback allow",
+        ),
+    ];
+    for (state, extra, message) in cases {
+        let mut arguments = provision(&root, state, "");
+        arguments.extend(extra.iter().map(|option| option.to_string()));
+        let output = run(&root, &arguments);
+        let stderr = text(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert_eq!(stderr, format!("error: {message}\n"), "{stderr}");
+        assert!(
+            !root.path.join(state).exists(),
+            "the refused provision of {state} wrote a state directory"
+        );
+    }
+}
+
+#[test]
+fn run_dry_run_refuses_egress_rules_without_network_egress() {
+    // The same prevalidation refuses `run --dry-run` before it plans the launch.
+    let root = populated_root();
+    let path = |name: &str| root.path.join(name).to_str().unwrap().to_owned();
+    let dry_run: Vec<String> = vec![
+        "sandbox".into(),
+        "run".into(),
+        "--layer".into(),
+        format!(
+            "distro,{},11111111-1111-1111-1111-111111111111",
+            path("distro.erofs")
+        ),
+        "--scratch".into(),
+        path("scratch.ext4"),
+        "--dry-run".into(),
+        "--network-egress-allow".into(),
+        "tcp://*.example.com:443".into(),
+    ];
+    let output = run(&root, &dry_run);
+    let stderr = text(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert_eq!(
+        stderr,
+        "error: openvmm: --network-egress is required with egress rules\n"
+    );
+}
