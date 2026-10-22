@@ -473,7 +473,23 @@ struct EgressRules {
 /// Returns `_resolve_network_egress_rules(args)`: the explicit rules, or those that the
 /// `--network-egress-policy-file` compiles to, which neither rule option nor a missing
 /// `--network-egress` may accompany.
+///
+/// It prevalidates the network options that OpenVMM would refuse, with OpenVMM's messages:
+/// non-empty `--network-egress-allow` or `--network-egress-deny` without `--network-egress`,
+/// and `--host-loopback-forward` without `--host-loopback allow`.
 fn resolve_network_egress_rules(options: &Options) -> Result<EgressRules> {
+    if (!options.network_egress_allow.is_empty() || !options.network_egress_deny.is_empty())
+        && options.network_egress.is_none()
+    {
+        return Err(Exit::error(
+            "openvmm: --network-egress is required with egress rules",
+        ));
+    }
+    if !options.host_loopback_forward.is_empty() && options.host_loopback != Some("allow") {
+        return Err(Exit::error(
+            "openvmm: --host-loopback-forward requires explicit --host-loopback allow",
+        ));
+    }
     let Some(policy) = &options.network_egress_policy_file else {
         return Ok(EgressRules {
             allow: options.network_egress_allow.clone(),
